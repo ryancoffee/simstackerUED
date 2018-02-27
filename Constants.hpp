@@ -6,7 +6,7 @@
 
 // setting up general constants ...as inline replacements via preprocessor //
 
-#define pi M_PI // 3.141592653589793
+//#define pi M_PI // 3.141592653589793
 #define Eh 27.2113845 // eV/hartree
 #define a0 0.5291772108 // AA/bohr
 #define nmPau 0.05291772108 // nm/bohr

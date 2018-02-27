@@ -9,6 +9,7 @@
 #include <stdio.h>
 #include <cmath>
 #include <math.h>
+#include <complex>
 #include <ctime>
 #include <string>
 //#include <initializer_list> // this requires -std=c++11 in the CFLAGS
@@ -39,6 +40,7 @@
 
 // Boost imports // 
 #include <boost/math/constants/constants.hpp>
+#include <boost/math/special_functions/legendre.hpp>
 
 #include "./non_obj_propagator.hpp"
 //#include "./data2d.hpp"
@@ -53,13 +55,18 @@
 //#include "kmlocal/KMlocal.h"
 
 using namespace std;
+using namespace complex_literals;
 
 #define MIN_POWSPEC 1e-3 // this is really dirty...
 
 int main(int argc, char *argv[]) {
 
-	double PI = boost::math::constants::pi<double>();
-	std::cout << "testing boost::constants\tpi = \t" << PI << std::endl;
+	/*
+	std::cout << "testing boost::constants\tpi = \t" << PI<double>() << std::endl;
+	std::cout << "testing complex literals\t";
+	std::complex<double> z = 1.0 + 1i;
+	std::cout << "z = (" << z.real() << " , " << z.imag() << ")" << std::endl;
+	*/
 
 	// getting cmd line args
 	if (argc < 9) {
@@ -71,7 +78,7 @@ int main(int argc, char *argv[]) {
 
 	// generate filenames //
 	string filename,filetail="_",pjstarttail="_";
-	std::string datadir("data_n2o/");
+	std::string datadir("data_debug/");
 	std::string molstring("n2o");
 	filetail += argv[2];
 	filetail += "K_";
@@ -131,7 +138,7 @@ int main(int argc, char *argv[]) {
 		Ctaus[i]=M_SQRTPI * static_cast<double>(atof(argv[9]))/fsPau/2.0; // this is 1/e half-width, input is assumed to be 1/e full-width of a gaussian.  The sqrt(pi) gives a proper cos^2 pulse length that integrates to the same area as the gaussian.
 		t0s[i]= i * static_cast<double>(atof(argv[10]))/fsPau;
 		omegas[i]=0.0;// hc/800/Eh; // wavelength assumed to be 800nm, or 0 if non-resonant
-		phases[i]=0.0 * pi;
+		phases[i]=0.0 * PI<double>();
 	}
 
 	double *aajmPtr=aajm;
@@ -203,6 +210,21 @@ int main(int argc, char *argv[]) {
 
 	unsigned tstep=0;
 	double times[2*ntsteps],signal[2*ntsteps],imsignal[2*ntsteps];//,cossq[2]={0.0,0.0};
+
+	// building legendre and distro storage areas
+	record_t thetas(20);
+	data2d_t legendres;
+	legendres.reserve(thetas.size()*maxj);
+	legendres.resize(thetas.size());
+	data2d_t distro;
+	distro.reserve(ntsteps*maxj);
+	distro.resize(thetas.size());
+	for (size_t th=0;th<thetas.size();++th){
+		legendres[th].resize(maxj,0.);
+		distro[th].resize(ntsteps,0.);
+	}
+
+
 	for(tstep=0;tstep<ntsteps;tstep++){
 		signal[tstep]=0.0;
 		imsignal[tstep]=0.0;
@@ -242,6 +264,15 @@ int main(int argc, char *argv[]) {
 
 			// ------- now I want to make a function to set dim ----------- //
 			int dim=getmaxdim(&params); //(sizej-m)*2;// (jwin*2+1)*2;  // here's where we remove jwin, it seems dim is twice too big since only even(odd) Js couple
+			computeLegendres(thetas,legendres,&params);
+
+			if (m==0 || m==10)
+			{
+				std::cout << "printing Legendres m = " << m<< std::endl;
+				filename = datadir + std::string("tempfile.") + std::to_string(m) + ".dat";
+				printLegendres(filename,thetas,legendres);
+			}
+
 
 			params.dim=dim;
 			params.ejPtr=ejPtr;
@@ -284,7 +315,7 @@ int main(int argc, char *argv[]) {
 								}
 							}
 						}
-						addtosignal(y,signal,imsignal,tind,&params);
+						addtosignaldistro(y,signal,imsignal,distro,tind,&params);
 
 						passt = t;
 					}
@@ -301,7 +332,7 @@ int main(int argc, char *argv[]) {
 						samplecoupling(y,&params);
 					}
 				} else {
-					passtosignal(signal,imsignal,&params);
+					passtosignaldistro(signal,imsignal,distro,&params);
 					passtopjnew(&params);
 				}
 			} // close j loop 
@@ -378,7 +409,7 @@ void unwrap(const unsigned samples,double * array){
 				array[j] -= 2.*M_PI;
 		} else if (difference < -M_PI) {
 			for (unsigned j=i;j<samples;j++)
-				array[j] += 2.*M_PI;
+				array[j] += two_PI<double>();
 		}
 	}
 	double ref = array[0];
@@ -386,10 +417,10 @@ void unwrap(const unsigned samples,double * array){
 		array[i] -= ref;
 }
 void removeslope(const unsigned samples,double * array){
-	array[samples/2] -= M_PI*samples/2;
+	array[samples/2] -= half_PI<double>()*samples;
 	for (unsigned i=1;i<samples/2;i++){
-		array[i] -= M_PI*i;
-		array[samples-i] += M_PI*i;
+		array[i] -= PI<double>()*i;
+		array[samples-i] += PI<double>()*i;
 	}
 
 }
@@ -912,6 +943,61 @@ void hc2ampphase_print(std::vector< std::vector< double * > > &data,const unsign
 	}
 
 
+	void addtosignaldistro(double *y,double *signal,double *imsignal,data2d_t & distro,int tind,PARAMS *paraPtr){
+
+
+		const int m=paraPtr->m;
+		const int dim = paraPtr->dim;
+		const int jstart = paraPtr->jstart;
+		const int v = paraPtr->currentv;
+
+		double realcossq=0.0, imagcossq=0.0;
+		int realj;
+		int *realjPtr=&realj;
+			
+
+		/*
+		Distro contribution... here we multiply the Ylm by the complex coefficient (I guess) to get the theta dependence for hte coherent sum.
+		Then we add that sum to the total distro vector.
+		Actually, I bet we take the absolute square of it conj(psi)*psi where psi is the coherent sum of phi's which are the complex coefficient weighted Ylms
+		You want Psi(l,m) and to project that onto Psi(theta,phi)
+		*/
+
+		/*
+		We should not recompute the Legendres every pass, maybe only once on every update of m, then pass it through paraPtr
+		*/
+
+
+		//  sqrnormalizey(y,paraPtr);
+
+		for (int i=0;i<dim;i+=2){
+			setrealj(realjPtr,&i,paraPtr);
+			if (*realjPtr != -1){
+				realcossq += ( gsl_pow_2(y[i]) + gsl_pow_2(y[i+1]) ) * paraPtr->aajmPtr[*realjPtr];
+				imagcossq += 0.0;
+				if(i<(dim-2)){
+					realcossq += (y[i] * y[i+2] + y[i+1] * y[i+3])  * paraPtr->ccjmPtr[*realjPtr];
+					imagcossq += (-y[i+3] * y[i] + y[i+2] * y[i+1]) * paraPtr->ccjmPtr[*realjPtr];
+				}
+				if(i>2){
+					realcossq += (y[i] * y[i-2] + y[i+1] * y[i-1]) * paraPtr->bbjmPtr[*realjPtr];
+					imagcossq += (-y[i-1] * y[i] + y[i-2] * y[i+1]) * paraPtr->bbjmPtr[*realjPtr];
+				}
+			double scale = paraPtr->pvPtr[v] * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
+			//std::complex<double> coeff = y[i] + 1i * y[i+1];
+			// HERE HERE HERE HERE //
+			//projectYlm(,);
+			}
+		}
+
+		if(m==0){
+			signal[tind] += realcossq * paraPtr->pvPtr[v]  * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
+			imsignal[tind] += imagcossq * paraPtr->pvPtr[v]  * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
+		} else {
+			signal[tind] += 2*realcossq * paraPtr->pvPtr[v]  * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
+			imsignal[tind] += 2*imagcossq * paraPtr->pvPtr[v]  * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
+		}
+	}
 	void addtosignal(double *y,double *signal,double *imsignal,int tind,PARAMS *paraPtr){
 
 		const int m=paraPtr->m;
@@ -950,6 +1036,19 @@ void hc2ampphase_print(std::vector< std::vector< double * > > &data,const unsign
 		}
 	}
 
+void passtosignaldistro(double *signal,double *imsignal,data2d_t & distro,PARAMS *paraPtr){
+	const int m = paraPtr->m;
+	const int jstart = paraPtr->jstart;
+	const int v = paraPtr->currentv;
+
+	for (int tind=0;tind<paraPtr->ntsteps;tind++){
+		if(m==0){
+			signal[tind] += paraPtr->aajmPtr[jstart+m] * paraPtr->pvPtr[v] * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1); // same as adding 1/3 * pj
+		} else {
+			signal[tind] += 2 * paraPtr->aajmPtr[jstart+m] * paraPtr->pvPtr[v] * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1); // same as adding 2/3 * pj
+		}
+	}
+}
 // here we can add addtocos() rather than addtocossq().  That would include terms that look forward and backward only by one element //
 
 
@@ -963,6 +1062,35 @@ void passtosignal(double *signal,double *imsignal,PARAMS *paraPtr){
 			signal[tind] += paraPtr->aajmPtr[jstart+m] * paraPtr->pvPtr[v] * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1); // same as adding 1/3 * pj
 		} else {
 			signal[tind] += 2 * paraPtr->aajmPtr[jstart+m] * paraPtr->pvPtr[v] * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1); // same as adding 2/3 * pj
+		}
+	}
+}
+
+void printLegendres(std::string & file,record_t & th,data2d_t & legs)
+{
+	std::ofstream out(file.c_str(),std::ios::out);
+	for(size_t t=0;t<th.size();++t){
+		out << th[t] << "\t";
+		for(size_t j=0;j<legs[t].size();++j)
+		{
+			out << legs[t][j] << "\t";
+		}
+		out << "\n";
+	}
+	out << std::endl;
+	out.close();
+}
+void computeLegendres(record_t & thetas, data2d_t & legs,PARAMS *paraPtr)
+{
+	const int m = paraPtr->m;
+	const int maxj = paraPtr->maxj;
+	for(size_t t=0;t<thetas.size();++t){
+		thetas[t] = t*two_PI<double>()/double(thetas.size()-1);
+		for(size_t j=0;j<2;++j){
+			legs[t][j]=(boost::math::legendre_p(j + m, m, std::cos(thetas[t])));
+		}
+		for(size_t j=2;j<maxj-m;++j){
+			legs[t][j]=(boost::math::legendre_next(j + m - 1, m, std::cos(thetas[t]), legs[t][j-1], legs[t][j-2]));
 		}
 	}
 }
@@ -1158,7 +1286,7 @@ bool inpulse(const double t,PARAMS * paraPtr,double *FF){
 	for (p=0;p<paraPtr->npulses;p++){
 		if (t >= paraPtr->t0s[p]-paraPtr->Ctaus[p] && t <= paraPtr->t0s[p]+paraPtr->Ctaus[p]){
 			isinpulse = true;
-			*FF += paraPtr->strengths[p]* ( gsl_pow_2( cos(M_PI_2*(t-paraPtr->t0s[p])/paraPtr->Ctaus[p]) ) );
+			*FF += paraPtr->strengths[p]* ( gsl_pow_2( cos(PI<double>()*(t-paraPtr->t0s[p])/paraPtr->Ctaus[p]) ) );
 		}
 	}
 	return isinpulse;
@@ -1169,7 +1297,7 @@ bool inpulse(const double t,PARAMS * paraPtr,double *FF,double *dFFdt){
 	for (p=0;p<paraPtr->npulses;p++){
 		if (t >= paraPtr->t0s[p]-paraPtr->Ctaus[p] && t <= paraPtr->t0s[p]+paraPtr->Ctaus[p]){
 			isinpulse = true;
-			*FF += paraPtr->strengths[p]* ( gsl_pow_2( cos(M_PI_2*(t-paraPtr->t0s[p])/paraPtr->Ctaus[p]) ) );
+			*FF += paraPtr->strengths[p]* ( gsl_pow_2( cos(PI<double>()*(t-paraPtr->t0s[p])/paraPtr->Ctaus[p]) ) );
 			*dFFdt += -paraPtr->strengths[p]/2 * ( M_PI/paraPtr->Ctaus[p] * sin(M_PI*(t-paraPtr->t0s[p])/paraPtr->Ctaus[p]));
 		}
 	}

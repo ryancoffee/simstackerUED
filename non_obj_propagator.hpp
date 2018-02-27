@@ -1,6 +1,10 @@
 #ifndef NON_OBJ_PROPAGATOR_H
 #define NON_OBJ_PROPAGATOR_H
 
+#include <vector>
+#include <complex>
+#include <cmath>
+
 // my headers
 #include "Constants.hpp"
 
@@ -10,11 +14,22 @@
 #define REAL(z,i) ((z)(2*i))
 #define IMAG(z,i) ((z)(2*i+1))
 
+typedef std::vector< std::complex<double> > cvec_t;
 
 using namespace std;
 
-typedef vector <double> record_t;
-typedef vector <record_t> data_t;
+typedef std::vector<double> record_t;
+typedef std::vector< record_t > data2d_t;
+
+template <typename T>
+inline T PI(void){return boost::math::constants::pi<T>();}
+template <typename T>
+inline T two_PI(void){return boost::math::constants::pi<T>();}
+template <typename T>
+inline T root_PI(void) { return boost::math::constants::root_pi<T>(); }
+template <typename T>
+inline T half_PI(void) { return boost::math::constants::half_pi<T>(); }
+
 
 void hc2ampphase(std::vector< std::vector< double * > > &data, const unsigned ntsteps);
 void hc2ampphase_print(std::vector< std::vector< double * > > &data,const unsigned nsamples,std::ofstream &outstream);
@@ -52,13 +67,18 @@ bool inpulse(const double t,PARAMS * paraPtr,double *FF,double *dFFdt);
 int func (double t,const double y[],double f[],void *paraPtrvoid);
 int jac(double t,const double y[],double *dfdy,double dfdt[],void *paraPtrvoid);
 void sqrnormalizey(double *y,PARAMS *paraPtr);
+void addtosignaldistro(double *y,double *signal,double *imsignal,data2d_t & distro,int tind,PARAMS *paraPtr);
 void addtosignal(double *y,double *signal,double *imsignal,int tind,PARAMS *paraPtr);
 void passtosignal(double *signal,double *imsignal,PARAMS *paraPtr);
+void passtosignaldistro(double *signal,double *imsignal,data2d_t & distro,PARAMS *paraPtr);
 void addtopjnew(const double *y,PARAMS *paraPtr);
 void passtopjnew(PARAMS *paraPtr);
 void setrealj(int *realj,const int *i,PARAMS *paraPtr);
 void samplecoupling(double *y,PARAMS *paraPtr);
 void samplefield(double t,double FF);
+
+void printLegendres(std::string & file,record_t & th,data2d_t & legs);
+void computeLegendres(record_t & th, data2d_t & legs,PARAMS *paraPtr);
 
 void setjejvecs(PARAMS *paraPtr);
 void setvibsvibens(PARAMS *paraPtr);
