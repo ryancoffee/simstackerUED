@@ -41,6 +41,7 @@
 // Boost imports // 
 #include <boost/math/constants/constants.hpp>
 #include <boost/math/special_functions/legendre.hpp>
+#include <boost/math/special_functions/gamma.hpp>
 
 #include "./non_obj_propagator.hpp"
 //#include "./data2d.hpp"
@@ -61,12 +62,23 @@ using namespace complex_literals;
 
 int main(int argc, char *argv[]) {
 
+
 	/*
 	std::cout << "testing boost::constants\tpi = \t" << PI<double>() << std::endl;
 	std::cout << "testing complex literals\t";
 	std::complex<double> z = 1.0 + 1i;
 	std::cout << "z = (" << z.real() << " , " << z.imag() << ")" << std::endl;
+
+	double x = 0.00001;
+	std::cout << x << "\t" << boost::math::tgamma1pm1(x) << std::endl;
+
+
+	for (int i=1;i<10;++i){
+		std::cout << i << "\t" << boost::math::tgamma(i) << "\n";
+	}
+	std::cout << std::endl;
 	*/
+
 
 	// getting cmd line args
 	if (argc < 9) {
@@ -201,7 +213,7 @@ int main(int argc, char *argv[]) {
 	unsigned ntpower;
 	ntpower = (unsigned)((log(tmp)/log(2.)) + 1);
 	ntsteps = pow(2, ntpower);
-	
+
 	params.ntsteps = ntsteps;
 	params.tstepsize = tstepsize;
 	clog << twinstart*fsPau << " fs: " << tstepsize*fsPau << " fs: " << (twinstart+(tstepsize*ntsteps))*fsPau << " fs in " << ntsteps << " steps." << endl;
@@ -212,17 +224,21 @@ int main(int argc, char *argv[]) {
 	double times[2*ntsteps],signal[2*ntsteps],imsignal[2*ntsteps];//,cossq[2]={0.0,0.0};
 
 	// building legendre and distro storage areas
-	record_t thetas(20);
+	record_t thetas(256);
 	data2d_t legendres;
-	legendres.reserve(thetas.size()*maxj);
+	legendres.reserve(thetas.size()*sizej);
 	legendres.resize(thetas.size());
 	data2d_t distro;
-	distro.reserve(ntsteps*maxj);
+	distro.reserve(thetas.size()*ntsteps);
 	distro.resize(thetas.size());
 	for (size_t th=0;th<thetas.size();++th){
-		legendres[th].resize(maxj,0.);
+		legendres[th].resize(sizej,0.);
 		distro[th].resize(ntsteps,0.);
 	}
+
+	params.legendresPtr = & legendres;
+	params.thetasPtr = & thetas;
+	params.distroPtr = & distro;
 
 
 	for(tstep=0;tstep<ntsteps;tstep++){
@@ -315,7 +331,7 @@ int main(int argc, char *argv[]) {
 								}
 							}
 						}
-						addtosignaldistro(y,signal,imsignal,distro,tind,&params);
+						addtosignaldistro(y,signal,imsignal,tind,&params);
 
 						passt = t;
 					}
@@ -332,7 +348,7 @@ int main(int argc, char *argv[]) {
 						samplecoupling(y,&params);
 					}
 				} else {
-					passtosignaldistro(signal,imsignal,distro,&params);
+					passtosignaldistro(signal,imsignal,&params);
 					passtopjnew(&params);
 				}
 			} // close j loop 
@@ -379,23 +395,45 @@ int main(int argc, char *argv[]) {
 	filename = datadir + molstring + ".cossq";
 	filename += filetail;
 	ofstream cossqout(filename.c_str(),ios::out);
-	std::string collectfilename(datadir);
-	collectfilename += molstring + ".collect";
-
-	ofstream cossqcollect(collectfilename.c_str(),std::ios::app);
+	filename = datadir + molstring + ".collect";
+	ofstream cossqcollect(filename.c_str(),std::ios::app);
 	if (!cossqout){
 		cerr << filename << " could not be opened" << endl;
 		return 1;
 	}
-	for(unsigned i=0;i<ntsteps;i++){
+
+	filename = datadir + molstring + ".thetadistro";
+	filename += filetail;
+	std::ofstream thetaout(filename.c_str(),std::ios::out);
+	thetaout << "#";
+	for(size_t i=0;i<ntsteps;i++){
 		double psdelay;
 		psdelay = times[i]*fsPau/1e3;
+		thetaout << psdelay << "\t";
 		cossqout << psdelay << " " << signal[i] << " " << imsignal[i] << endl;
 		cossqcollect << signal[i] << "\t";
 	}
+	thetaout << "\n";
+	// HERE HERE HERE HERE //
+	// I don't have the right distributions... it doesn't give me a cos^2 = 1/3 //
+
+	long double sum(0);
+	long double norm(0);
+	for(size_t t=0;t<distro.size();++t){
+		for(size_t i=0;i<distro[0].size();++i){
+			sum += std::pow(std::cos(thetas[t]),int(2))*distro[t][i]/distro.size();
+			norm += distro[t][i]/distro.size();
+			thetaout << distro[t][i] << "\t";
+		}
+		thetaout << "\n";
+	}
+	std::cout << "<< cos^2 theta >> = " << sum/norm << std::endl;
+	thetaout << std::endl;
+
 	cossqcollect << "\n";
 	cossqout.close();
 	cossqcollect.close();
+	thetaout.close();
 
 	return 0;
 }
@@ -404,10 +442,10 @@ void unwrap(const unsigned samples,double * array){
 	for (unsigned i=1;i<samples;i++){
 		double difference;
 		difference = array[i] - array[i-1];
-		if (difference > M_PI){
+		if (difference > PI<double>()){
 			for (unsigned j=i;j<samples;j++)
-				array[j] -= 2.*M_PI;
-		} else if (difference < -M_PI) {
+				array[j] -= two_PI<double>();
+		} else if (difference < -PI<double>()) {
 			for (unsigned j=i;j<samples;j++)
 				array[j] += two_PI<double>();
 		}
@@ -449,7 +487,7 @@ void hc2ampphase(std::vector< std::vector< double * > > &data,const unsigned nsa
 	}
 	for (unsigned e=0;e<ens;e++){
 		if (data[e][phaseind][0])
-		unwrap(nsamples,data[e][phaseind]);
+			unwrap(nsamples,data[e][phaseind]);
 		removeslope(nsamples,data[e][phaseind]);
 	}
 
@@ -489,462 +527,543 @@ void hc2ampphase_print(std::vector< std::vector< double * > > &data,const unsign
 
 
 
-	// ---------- member functions ---------- //
+// ---------- member functions ---------- //
 
 
 
-	void print2col(const int size, const int *intvec,  const double *doublevec){
-		for(int i=0;i<size;i++){
-			cout << *intvec << " " << *doublevec << endl;
-			intvec++;
-			doublevec++;
-		}
-		intvec-=size;
-		doublevec-=size;
+void print2col(const int size, const int *intvec,  const double *doublevec){
+	for(int i=0;i<size;i++){
+		cout << *intvec << " " << *doublevec << endl;
+		intvec++;
+		doublevec++;
 	}
+	intvec-=size;
+	doublevec-=size;
+}
 
-	void print2col(const int size, const double *vec1, const double *vec2){
-		for(int i=0;i<size;i++){
-			cout << *vec1 << " " << *vec2 << endl;
-			vec1++;
-			vec2++;
-		}
-		vec1-=size;
-		vec2-=size;
+void print2col(const int size, const double *vec1, const double *vec2){
+	for(int i=0;i<size;i++){
+		cout << *vec1 << " " << *vec2 << endl;
+		vec1++;
+		vec2++;
 	}
+	vec1-=size;
+	vec2-=size;
+}
 
-	double sumvec(const int size,const double *vec){
-		double sum=0;
-		for(int i=0;i<size;i++){
-			sum+=*vec;
+double sumvec(const int size,const double *vec){
+	double sum=0;
+	for(int i=0;i<size;i++){
+		sum+=*vec;
+		vec++;
+	}
+	vec -=size;
+	return sum;
+}
+
+void scalevec(const int size,double *vec,double scale){
+	for(int i=0;i<size;i++){
+		*vec*=scale;
+		vec++;
+	}
+	vec-=size;
+}
+
+void sumnormvec(const int size,double *vec){
+	double sum=0;
+	for(int i=0;i<size;i++){
+		sum+=*vec;
+		vec++;
+	}
+	vec -=size;
+	scalevec(size,vec,1/sum);
+}
+
+// Initialize vib and rot vectors
+
+void setvibsvibens(PARAMS *paraPtr){
+	// first set vibs via vibsPtr
+	for(int vv=0;vv<paraPtr->nvibs;vv++){
+		paraPtr->vibsPtr[vv]=vv;
+	}
+	// now set vibens via vibensPtr
+	//vibrationalenergies_oco(paraPtr);
+	vibrationalenergies_nno(paraPtr);
+	//vibrationalenergies_oo(paraPtr);
+}
+
+void setjejvecs(PARAMS *paraPtr){
+	// first set j via jPtr
+	for(int i=0;i<paraPtr->sizej;i++){
+		paraPtr->jPtr[i]=i;
+	}
+	// now set ej via ejPtr
+	//rotationalenergies_oco(paraPtr);
+	rotationalenergies_nno(paraPtr);
+	//rotationalenergies_oo(paraPtr);
+}
+
+void setpvvec(PARAMS *paraPtr){//mark
+	double *pvPtr = paraPtr->pvPtr;
+	double frac;
+	for(int i=0;i<paraPtr->nvibs;i++){
+		frac=(paraPtr->vibensPtr[i]) / paraPtr->kTinau;
+		pvPtr[i]=exp(-frac);
+	}
+	sumnormvec(paraPtr->nvibs,pvPtr);
+	paraPtr->newvibsize=getnewsize(paraPtr->nvibs,pvPtr);
+	sumnormvec(paraPtr->newvibsize,pvPtr);
+	clog << "relevent vib pops = ";
+	for(int i=0;i<paraPtr->newvibsize;i++){
+		clog << pvPtr[i] << " ";
+	}
+	clog << endl;
+}
+
+
+int getnewsize(const int oldsize,const double *vec){
+	int newsize=0;
+	double floor = 1e-3;
+	for (int i=0;i<oldsize;i++){
+		if(*vec>floor){
+			newsize++;
 			vec++;
 		}
-		vec -=size;
-		return sum;
+	}
+	vec-=oldsize;
+	return newsize;
+}
+
+
+void setpjvec(PARAMS *paraPtr){
+	const int *jPtr = paraPtr->jPtr;
+	double *pjPtr = paraPtr->pjPtr;
+	const double *ejPtr = paraPtr->ejPtr;
+	const int sizej = paraPtr->sizej;
+
+	double frac, jj, mul, qj;
+	for(int i=0;i<sizej;i++){
+
+		((*jPtr%2)==0 ? mul=1 : mul=1); // I co2 think this is same as O2 but maybe opposite if electronic is symmetric for CO2 // even odd intensity ratio = mul 2:1 for n2, 7:5 for i2, 
+		// 0:1 for o2 I think, for N2O this should be an even 1:1 ratio
+
+		jj=static_cast<double>(*jPtr);
+		frac = *ejPtr/(paraPtr->kTinau); // atomic energy units
+		if(fabs(frac)<.1){
+			*pjPtr=(2*jj+1)*(1+gsl_expm1(-frac));
+		}else{
+			*pjPtr=(2*jj+1)*exp(-frac);
+		}
+		*pjPtr*=mul;
+		pjPtr++;
+		ejPtr++;
+		jPtr++;
+	}
+	pjPtr -=sizej;
+	ejPtr -=sizej;
+	jPtr -=sizej;
+	qj=sumvec(sizej,pjPtr);
+	scalevec(sizej,pjPtr,1/qj);
+} 
+
+void setelemsjm(const int m,const int sizej,double *aajmPtr,double *bbjmPtr,double *ccjmPtr){
+	//  clog << "started setting 3jms ... " << endl;  
+	static int jj;
+	for(jj=0;jj<sizej;jj++){
+		aajmPtr[jj]=0.0;
+		bbjmPtr[jj]=0.0;
+		ccjmPtr[jj]=0.0;
 	}
 
-	void scalevec(const int size,double *vec,double scale){
-		for(int i=0;i<size;i++){
-			*vec*=scale;
-			vec++;
+	for(jj=m;jj<sizej;jj++) { // these coefficienst come from Arfken and Webber 4th ed. p753, eq.12.189 applied twice.
+		aajmPtr[jj] = static_cast<double>((jj-m+1)*(jj+m+1)*(2*jj-1) + (2*jj+3)*(jj+m)*(jj-m))/static_cast<double>((2*jj-1)*(2*jj+1)*(2*jj+3));
+		if (jj>1) { // this term is 0 when j=0 m=0, j=1 m=0, j=1 m=1, and j=1 m=-1
+			bbjmPtr[jj] = sqrt(static_cast<double>((jj-m)*(jj+m)*(jj-m-1)*(jj+m-1)) / static_cast<double>((2*jj+1)*(2*jj-3)*gsl_pow_2(2*jj-1)) );  
 		}
-		vec-=size;
+		ccjmPtr[jj] = sqrt(static_cast<double>((jj-m+1)*(jj+m+1)*(jj-m+2)*(jj+m+2)) / static_cast<double>((2*jj+1)*(2*jj+5)*gsl_pow_2(2*jj+3)));  
 	}
 
-	void sumnormvec(const int size,double *vec){
-		double sum=0;
-		for(int i=0;i<size;i++){
-			sum+=*vec;
-			vec++;
+}
+
+// Calculate vibrational energies:
+
+void vibrationalenergies_ii(PARAMS *paraPtr){
+	const int nterms=10;
+	int v=0,n=0;
+	double vv=0.;
+	const double cc[]={214.5481, -0.616259, 7.507e-5, -1.263643e-4, 6.198129e-6, -2.0255975e-7, 3.9662824e-9, -4.6346554e-11, 2.9330755e-13, -7.61000e-16};
+	const double *ccPtr=cc;
+	for(v=0;v<paraPtr->nvibs;v++){
+		vv=static_cast<double>(v);
+		paraPtr->vibensPtr[v]=0;
+		for(n=0;n<nterms;n++){
+			paraPtr->vibensPtr[v]+=*ccPtr*gsl_pow_int(vv+0.5,n+1);
+			ccPtr++;
 		}
-		vec -=size;
-		scalevec(size,vec,1/sum);
+		ccPtr-=nterms;
+		paraPtr->vibensPtr[v] /= icmPau;
+	}
+}
+
+void vibrationalenergies_nn(PARAMS *paraPtr){
+	const int n=min(11,paraPtr->nvibs);
+	const double ens[]={1175.5, 3505.2, 5806.5, 8079.2, 10323.3, 12538.8, 14725.4, 16883.1, 19011.8, 21111.5, 23182.0};
+	for(int v=0;v<n;v++){
+		paraPtr->vibensPtr[v]=ens[v];
+		paraPtr->vibensPtr[v] /=icmPau;
+	}
+}
+void vibrationalenergies_oo(PARAMS *paraPtr){
+	// from JOURNAL OF MOLECULAR SPECTROSCOPY 154,372-382 ( 1992) G. ROUILLE "High-Resolution Stimulated Raman Spectroscopy of O2"
+	const int n=min(4,paraPtr->nvibs);
+	const double env_0 = (1556.38991/2.0);
+	const double dens[]={1556.38991, 1532.86724, 1509.5275};
+	double ens[4];
+	ens[0]=env_0;
+	ens[1] = ens[0] + dens[0];
+	ens[2] = ens[1] + dens[1];
+	ens[3] = ens[2] + dens[2];
+	for(int v=0;v<n;v++){
+		paraPtr->vibensPtr[v]=ens[v];
+		paraPtr->vibensPtr[v] /= icmPau;
+	}
+}
+
+
+// Calculate rotational energies:
+void rotationalenergies_nno(PARAMS *paraPtr)
+{
+	// From Bohlin et al., J. Raman Spect. v43 p604 (2012)
+	// units are icm as usual
+	std::vector<double> Bv {0.419011 , 0.419177 , 0.419969 , 0.419920 , 0.420125 , 0.420126 , 0.417255 , 0.419583 , 0.421079 , 0.420667 , 0.420671 , 0.417464 , 0.418372 , 0.415559 , 0.420618 , 0.420768 , 0.420772 , 0.421218 , 0.418147 , 0.418530 , 0.418531 , 0.415605 };
+	std::vector<double> Dv {1.76e-7 , 1.78e-7 , 1.79e-7 , 2.49e-7 , 1.19e-7 , 1.18e-7 , 1.72e-7 , 2.11e-7 , 2.17e-7 , 1.61e-7 , 1.68e-7 , 1.74e-7 , 1.71e-7 , 1.75e-7 , 3.96e-7 , 0.17e-7 , 2.16e-7 , 2.72e-7 , 2.43e-7 , 1.20e-7 , 1.75e-7 , 1.63e-7 };
+	std::vector<double> Hv {0.16e-13, -0.17e-13, -0.17e-13 , 29.55e-13, -29.50e-13, 0.95e-13, 1.46e-13, 12.22e-13, -3.59e-13, -9.91e-13, 30.15e-13, 1.07e-13, 2.17e-13, -0.13e-13, 140.28e-13, -142.92e-13, 4.83e-13, 1712.20e-13, 25.90e-13, -26.98e-13, 2.44e-13, 5.68e-13};
+
+	assert(Bv.size() == Dv.size());
+	assert(Bv.size() == Hv.size());
+	const int vv = min((int)Bv.size(),paraPtr->currentv);
+	for (unsigned i=0;i<paraPtr->sizej;i++){
+		double jj= (double)(paraPtr->jPtr[i]);
+		paraPtr->ejPtr[i] = Bv[vv]*jj*(jj+1)-Dv[vv]*gsl_pow_2(jj)*gsl_pow_2(jj+1) + Hv[vv]*gsl_pow_3(jj)*gsl_pow_3(jj+1); // in cm^-1
+		paraPtr->ejPtr[i] /= icmPau; // in atomic units
+	}
+}
+void vibrationalenergies_nno(PARAMS *paraPtr)
+{
+	// From Bohlin et al., J. Raman Spect. v43 p604 (2012)
+	// units are icm as usual
+	std::vector<double> ens {0.0, 588.767870,588.767870 ,1168.13230 ,1177.74467 ,1177.74467 ,1284.90334 ,1749.06523 ,1749.06515 ,1766.91238 ,1766.91224 ,1880.26574 ,1880.26574 ,2223.75676 ,2322.57308 ,2331.12151 ,2331.12145 ,2356.25242 ,2461.99644 ,2474.79870 ,2474.79865 ,2563.33944};
+
+	const int maxvibs = min(paraPtr->nvibs,(int)ens.size());
+	for(unsigned v=0;v<maxvibs;v++){
+		paraPtr->vibensPtr[v] = ens[v]/icmPau;
 	}
 
-	// Initialize vib and rot vectors
+}
+void vibrationalenergies_oco(PARAMS *paraPtr)
+{
+	// from Rothman and Young, J. Quonf. Spectrosc. Radia. Transfer Vol. 25, pp. 505-524. 1981
+	std::vector<double> ens {0.0,667.379,1285.4087,1335.129,1388.1847,1932.472,2003.244,2076.855,2349.1433,	2548.373,2585.032,2671.146,2671.716,2760.735,2797.140,3004.012,3181.450,3240.564,3339.340,3340.501,3442.256,3500.590,3612.842,3659.271,3714.783	};
+	const int maxvibs = min(paraPtr->nvibs,(int)ens.size());
+	for(unsigned v=0;v<maxvibs;v++){
+		paraPtr->vibensPtr[v] = ens[v]/icmPau;
+	}
+}
+void rotationalenergies_oco(PARAMS *paraPtr)
+{
+	// from Rothman and Young, J. Quonf. Spectrosc. Radia. Transfer Vol. 25, pp. 505-524. 1981
+	std::vector<double> Bv {0.39021894,0.39064230,0.39048230,0.39167020,0.39018893,0.39073215,0.39238558,0.39041600,0.38714140,0.39110670,0.39193800,0.38954820,0.39308410,0.39153500,0.39059100,0.38759300,0.3910280,0.3926960,0.3900350,0.393908,0.3922100,0.3904610,0.38750493,0.38864000,0.38706227};
+	std::vector<double> Dv {1.33373e-7,1.359e-7,1.57161e-7,1.389e-7,1.14952e-7,1.441e-7,1.403e-7,1.281e-7,1.33034e-7,1.7820e-7,1.390e-7,1.2630e-7,1.42e-7,1.44e-7,0.88e-7,1.349e-7,1.63e-7,1.51e-7,1.37e-7,1.44e-7,1.36e-7,1.14e-7,1.58150e-7,1.37445e-7,1.13570e-7};
+	std::vector<double> Hv {0.16e-13,0.17e-13,2.33e-13,0.,1.91e-13,0.,0.,0.,0.17e-13,0.40e-13,0.,4.65e-13,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,2.74e-13,0.,1.10e-13};
 
-	void setvibsvibens(PARAMS *paraPtr){
-		// first set vibs via vibsPtr
-		for(int vv=0;vv<paraPtr->nvibs;vv++){
-			paraPtr->vibsPtr[vv]=vv;
-		}
-		// now set vibens via vibensPtr
-		//vibrationalenergies_oco(paraPtr);
-		vibrationalenergies_nno(paraPtr);
-		//vibrationalenergies_oo(paraPtr);
+	assert(Bv.size() == Dv.size());
+	assert(Bv.size() == Hv.size());
+	const int v = min(paraPtr->currentv,(int)Bv.size());
+	for (unsigned i=0;i<paraPtr->sizej;i++){
+		double j= (double)(paraPtr->jPtr[i]);
+		paraPtr->ejPtr[i] = Bv[v]*j*(j+1)-Dv[v]*gsl_pow_2(j)*gsl_pow_2(j+1) + Hv[v]*gsl_pow_3(j)*gsl_pow_3(j+1); // in cm^-1
+		paraPtr->ejPtr[i] /= icmPau; // in atomic units
 	}
 
-	void setjejvecs(PARAMS *paraPtr){
-		// first set j via jPtr
-		for(int i=0;i<paraPtr->sizej;i++){
-			paraPtr->jPtr[i]=i;
-		}
-		// now set ej via ejPtr
-		//rotationalenergies_oco(paraPtr);
-		rotationalenergies_nno(paraPtr);
-		//rotationalenergies_oo(paraPtr);
+}
+
+void rotationalenergies_oo(PARAMS *paraPtr){
+	// from JOURNAL OF MOLECULAR SPECTROSCOPY 154,372-382 ( 1992) G. ROUILLE "High-Resolution Stimulated Raman Spectroscopy of O2"
+	const int vv = min(3,paraPtr->currentv);
+	const double Bv[] = {1.437676476, 1.42186454, 1.4061199, 1.39042};
+	const double Dv[] = {4.84256e-6, 4.8418e-6, 4.8410e-6, 4.8402e-6};
+	const double Hv = 2.8e-12;
+	double jj;
+	for (int i=0;i<paraPtr->sizej;i++){
+		jj= static_cast<double>(paraPtr->jPtr[i]);
+		paraPtr->ejPtr[i] = Bv[vv]*jj*(jj+1)-Dv[vv]*gsl_pow_2(jj)*gsl_pow_2(jj+1) + Hv*gsl_pow_3(jj)*gsl_pow_3(jj+1); // in cm^-1
+		paraPtr->ejPtr[i] /= icmPau; // in atomic units
+	}
+}
+void rotationalenergies_nn(PARAMS *paraPtr){
+	// numbers come from Loftus and Kuprienie, J. Phys. Chem. ref. Data, Vol. 6, No. 1, 1977. p242
+	const int vv = min(16,paraPtr->currentv);
+	const double Bv[]={1.98957, 1.972, 1.9548, 1.9374, 1.9200, 1.9022, 1.8845, 1.8666, 1.8488, 1.8310, 1.8131, 1.7956, 1.7771, 1.7590, 1.7406, 1.7223};
+	double Dv = 1e-6*5.75, jj;
+	//  Dv*=10; // artificially increase the distortion rather than temperature.
+	//  Dv *= 0.0; // artificially kill distortion
+	for (int i=0;i<paraPtr->sizej;i++){
+		jj= static_cast<double>(paraPtr->jPtr[i]);
+		paraPtr->ejPtr[i] = Bv[vv]*jj*(jj+1)-Dv*gsl_pow_2(jj)*gsl_pow_2(jj+1); // in cm^-1
+		paraPtr->ejPtr[i] /= icmPau; // in atomic units
+	}
+}
+
+void rotationalenergies_nn_nodistortion(PARAMS *paraPtr){
+	// numbers come from Loftus and Kuprienie, J. Phys. Chem. ref. Data, Vol. 6, No. 1, 1977. p242
+	const int vv = min(16,paraPtr->currentv);
+	const double Bv[]={1.98957, 1.972, 1.9548, 1.9374, 1.9200, 1.9022, 1.8845, 1.8666, 1.8488, 1.8310, 1.8131, 1.7956, 1.7771, 1.7590, 1.7406, 1.7223};
+	double jj;
+	for (int i=0;i<paraPtr->sizej;i++){
+		jj= static_cast<double>(paraPtr->jPtr[i]);
+		paraPtr->ejPtr[i] = Bv[vv]*jj*(jj+1);// in cm^-1
+		paraPtr->ejPtr[i] /= icmPau; // in atomic units
+	}
+}
+
+void rotationalenergies_ii(PARAMS *paraPtr){
+	double Bv, Dv, vv, jj;
+	vv = static_cast<double>(paraPtr->currentv);
+	for (int i=0;i<paraPtr->sizej;i++){
+		jj= static_cast<double>(paraPtr->jPtr[i]);
+		Bv=3.7395e-2 - 1.2435e-4*(vv+0.5) + 4.498e-7*gsl_pow_2(vv+0.5) - 1.482e-8*gsl_pow_3(vv+0.5) - 3.64e-11*gsl_pow_4(vv+0.5);
+		Dv=4.54e-9 + 1.7e-11*(vv+0.5) + 7e-12*gsl_pow_2(vv+0.5);
+		paraPtr->ejPtr[i]=Bv*jj*(jj+1)-Dv*gsl_pow_2(jj)*gsl_pow_2(jj+1); // in cm^-1
+		paraPtr->ejPtr[i] /= icmPau; // in atomic units
+	}
+}
+
+
+int func (double t,const double y[],double f[],void *paraPtrvoid){
+	PARAMS *paraPtr;
+	paraPtr = (PARAMS *)paraPtrvoid;
+	const int m=paraPtr->m;
+	const int dim=paraPtr->dim;
+	const int jstart = paraPtr->jstart;
+
+	int realj;
+	int *realjPtr=&realj;
+
+	static double FF;
+	FF = 0.0;
+
+	static int i;
+
+	for (i=0;i<dim;i++){
+		f[i]=0.0;
 	}
 
-	void setpvvec(PARAMS *paraPtr){//mark
-		double *pvPtr = paraPtr->pvPtr;
-		double frac;
-		for(int i=0;i<paraPtr->nvibs;i++){
-			frac=(paraPtr->vibensPtr[i]) / paraPtr->kTinau;
-			pvPtr[i]=exp(-frac);
-		}
-		sumnormvec(paraPtr->nvibs,pvPtr);
-		paraPtr->newvibsize=getnewsize(paraPtr->nvibs,pvPtr);
-		sumnormvec(paraPtr->newvibsize,pvPtr);
-		clog << "relevent vib pops = ";
-		for(int i=0;i<paraPtr->newvibsize;i++){
-			clog << pvPtr[i] << " ";
-		}
-		clog << endl;
-	}
+	if( inpulse(t,paraPtr,&FF) ){  // is coupling
 
+		double aa,bb,cc;
 
-	int getnewsize(const int oldsize,const double *vec){
-		int newsize=0;
-		double floor = 1e-3;
-		for (int i=0;i<oldsize;i++){
-			if(*vec>floor){
-				newsize++;
-				vec++;
+		for (i=0;i<dim;i+=2){
+			setrealj(realjPtr,&i,paraPtr);
+			//      if (paraPtr->m==1 && paraPtr->jstart==0 && static_cast<int>(t) == 0){cout << *realjPtr << " ";}
+			if (*realjPtr != -1){
+				aa = (paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m]) - (1+paraPtr->aajmPtr[*realjPtr])*FF;
+				bb = -1.0 * (paraPtr->bbjmPtr[*realjPtr])*FF;
+				cc = -1.0 * (paraPtr->ccjmPtr[*realjPtr])*FF;
+				f[i] = aa*y[i+1];
+				f[i+1] = -1.0*aa*y[i];
+				if (i>0) {
+					f[i] += bb*y[i-2+1];
+					f[i+1] -= bb*y[i-2];
+				}
+				if (i<dim-2) {
+					f[i] += cc*y[i+3];
+					f[i+1] -= cc*y[i+2];
+				}
 			}
 		}
-		vec-=oldsize;
-		return newsize;
-	}
 
+	} else {  // no coupling
 
-	void setpjvec(PARAMS *paraPtr){
-		const int *jPtr = paraPtr->jPtr;
-		double *pjPtr = paraPtr->pjPtr;
-		const double *ejPtr = paraPtr->ejPtr;
-		const int sizej = paraPtr->sizej;
-
-		double frac, jj, mul, qj;
-		for(int i=0;i<sizej;i++){
-
-			((*jPtr%2)==0 ? mul=1 : mul=1); // I co2 think this is same as O2 but maybe opposite if electronic is symmetric for CO2 // even odd intensity ratio = mul 2:1 for n2, 7:5 for i2, 
-			// 0:1 for o2 I think, for N2O this should be an even 1:1 ratio
-
-			jj=static_cast<double>(*jPtr);
-			frac = *ejPtr/(paraPtr->kTinau); // atomic energy units
-			if(fabs(frac)<.1){
-				*pjPtr=(2*jj+1)*(1+gsl_expm1(-frac));
-			}else{
-				*pjPtr=(2*jj+1)*exp(-frac);
+		for (i=0;i<dim;i+=2){
+			setrealj(realjPtr,&i,paraPtr);
+			if (*realjPtr != -1){
+				f[i]= (paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m])*y[i+1];
+				f[i+1]= -(paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m])*y[i];
+				// y' = E/i y; y = exp(-iEt)
 			}
-			*pjPtr*=mul;
-			pjPtr++;
-			ejPtr++;
-			jPtr++;
 		}
-		pjPtr -=sizej;
-		ejPtr -=sizej;
-		jPtr -=sizej;
-		qj=sumvec(sizej,pjPtr);
-		scalevec(sizej,pjPtr,1/qj);
 	} 
+	return GSL_SUCCESS;
+}
 
-	void setelemsjm(const int m,const int sizej,double *aajmPtr,double *bbjmPtr,double *ccjmPtr){
-		//  clog << "started setting 3jms ... " << endl;  
-		static int jj;
-		for(jj=0;jj<sizej;jj++){
-			aajmPtr[jj]=0.0;
-			bbjmPtr[jj]=0.0;
-			ccjmPtr[jj]=0.0;
-		}
+int jac(double t,const double y[],double *dfdy,double dfdt[],void *paraPtrvoid){
+	PARAMS *paraPtr;
+	paraPtr = (PARAMS *)paraPtrvoid;
+	const int m=paraPtr->m;
+	const int dim = paraPtr->dim;
+	const int jstart = paraPtr->jstart;
 
-		for(jj=m;jj<sizej;jj++) { // these coefficienst come from Arfken and Webber 4th ed. p753, eq.12.189 applied twice.
-			aajmPtr[jj] = static_cast<double>((jj-m+1)*(jj+m+1)*(2*jj-1) + (2*jj+3)*(jj+m)*(jj-m))/static_cast<double>((2*jj-1)*(2*jj+1)*(2*jj+3));
-			if (jj>1) { // this term is 0 when j=0 m=0, j=1 m=0, j=1 m=1, and j=1 m=-1
-				bbjmPtr[jj] = sqrt(static_cast<double>((jj-m)*(jj+m)*(jj-m-1)*(jj+m-1)) / static_cast<double>((2*jj+1)*(2*jj-3)*gsl_pow_2(2*jj-1)) );  
-			}
-			ccjmPtr[jj] = sqrt(static_cast<double>((jj-m+1)*(jj+m+1)*(jj-m+2)*(jj+m+2)) / static_cast<double>((2*jj+1)*(2*jj+5)*gsl_pow_2(2*jj+3)));  
-		}
+	static int realj;
+	int *realjPtr=&realj;
 
+	static int i;
+	for (i=0;i<gsl_pow_2(dim);i++){
+		dfdy[i]=0.0;
+	}
+	gsl_matrix_view dfdy_mat = gsl_matrix_view_array(dfdy,dim,dim);
+	gsl_matrix *mat = &dfdy_mat.matrix;
+
+
+	for (int i=0;i<dim;i++){
+		dfdt[i]=0.0;
 	}
 
-	// Calculate vibrational energies:
+	double FF=0.0, dFFdt = 0.0;
 
-	void vibrationalenergies_ii(PARAMS *paraPtr){
-		const int nterms=10;
-		int v=0,n=0;
-		double vv=0.;
-		const double cc[]={214.5481, -0.616259, 7.507e-5, -1.263643e-4, 6.198129e-6, -2.0255975e-7, 3.9662824e-9, -4.6346554e-11, 2.9330755e-13, -7.61000e-16};
-		const double *ccPtr=cc;
-		for(v=0;v<paraPtr->nvibs;v++){
-			vv=static_cast<double>(v);
-			paraPtr->vibensPtr[v]=0;
-			for(n=0;n<nterms;n++){
-				paraPtr->vibensPtr[v]+=*ccPtr*gsl_pow_int(vv+0.5,n+1);
-				ccPtr++;
-			}
-			ccPtr-=nterms;
-			paraPtr->vibensPtr[v] /= icmPau;
-		}
-	}
-
-	void vibrationalenergies_nn(PARAMS *paraPtr){
-		const int n=min(11,paraPtr->nvibs);
-		const double ens[]={1175.5, 3505.2, 5806.5, 8079.2, 10323.3, 12538.8, 14725.4, 16883.1, 19011.8, 21111.5, 23182.0};
-		for(int v=0;v<n;v++){
-			paraPtr->vibensPtr[v]=ens[v];
-			paraPtr->vibensPtr[v] /=icmPau;
-		}
-	}
-	void vibrationalenergies_oo(PARAMS *paraPtr){
-		// from JOURNAL OF MOLECULAR SPECTROSCOPY 154,372-382 ( 1992) G. ROUILLE "High-Resolution Stimulated Raman Spectroscopy of O2"
-		const int n=min(4,paraPtr->nvibs);
-		const double env_0 = (1556.38991/2.0);
-		const double dens[]={1556.38991, 1532.86724, 1509.5275};
-		double ens[4];
-		ens[0]=env_0;
-		ens[1] = ens[0] + dens[0];
-		ens[2] = ens[1] + dens[1];
-		ens[3] = ens[2] + dens[2];
-		for(int v=0;v<n;v++){
-			paraPtr->vibensPtr[v]=ens[v];
-			paraPtr->vibensPtr[v] /= icmPau;
-		}
-	}
+	if( inpulse(t,paraPtr,&FF,&dFFdt) ){  // is coupling
 
 
-	// Calculate rotational energies:
-	void rotationalenergies_nno(PARAMS *paraPtr)
-	{
-		// From Bohlin et al., J. Raman Spect. v43 p604 (2012)
-		// units are icm as usual
-		std::vector<double> Bv {0.419011 , 0.419177 , 0.419969 , 0.419920 , 0.420125 , 0.420126 , 0.417255 , 0.419583 , 0.421079 , 0.420667 , 0.420671 , 0.417464 , 0.418372 , 0.415559 , 0.420618 , 0.420768 , 0.420772 , 0.421218 , 0.418147 , 0.418530 , 0.418531 , 0.415605 };
-		std::vector<double> Dv {1.76e-7 , 1.78e-7 , 1.79e-7 , 2.49e-7 , 1.19e-7 , 1.18e-7 , 1.72e-7 , 2.11e-7 , 2.17e-7 , 1.61e-7 , 1.68e-7 , 1.74e-7 , 1.71e-7 , 1.75e-7 , 3.96e-7 , 0.17e-7 , 2.16e-7 , 2.72e-7 , 2.43e-7 , 1.20e-7 , 1.75e-7 , 1.63e-7 };
-		std::vector<double> Hv {0.16e-13, -0.17e-13, -0.17e-13 , 29.55e-13, -29.50e-13, 0.95e-13, 1.46e-13, 12.22e-13, -3.59e-13, -9.91e-13, 30.15e-13, 1.07e-13, 2.17e-13, -0.13e-13, 140.28e-13, -142.92e-13, 4.83e-13, 1712.20e-13, 25.90e-13, -26.98e-13, 2.44e-13, 5.68e-13};
-
-		assert(Bv.size() == Dv.size());
-		assert(Bv.size() == Hv.size());
-		const int vv = min((int)Bv.size(),paraPtr->currentv);
-		for (unsigned i=0;i<paraPtr->sizej;i++){
-			double jj= (double)(paraPtr->jPtr[i]);
-			paraPtr->ejPtr[i] = Bv[vv]*jj*(jj+1)-Dv[vv]*gsl_pow_2(jj)*gsl_pow_2(jj+1) + Hv[vv]*gsl_pow_3(jj)*gsl_pow_3(jj+1); // in cm^-1
-			paraPtr->ejPtr[i] /= icmPau; // in atomic units
-		}
-	}
-	void vibrationalenergies_nno(PARAMS *paraPtr)
-	{
-		// From Bohlin et al., J. Raman Spect. v43 p604 (2012)
-		// units are icm as usual
-		std::vector<double> ens {0.0, 588.767870,588.767870 ,1168.13230 ,1177.74467 ,1177.74467 ,1284.90334 ,1749.06523 ,1749.06515 ,1766.91238 ,1766.91224 ,1880.26574 ,1880.26574 ,2223.75676 ,2322.57308 ,2331.12151 ,2331.12145 ,2356.25242 ,2461.99644 ,2474.79870 ,2474.79865 ,2563.33944};
-
-		const int maxvibs = min(paraPtr->nvibs,(int)ens.size());
-		for(unsigned v=0;v<maxvibs;v++){
-			paraPtr->vibensPtr[v] = ens[v]/icmPau;
-		}
-
-	}
-	void vibrationalenergies_oco(PARAMS *paraPtr)
-	{
-		// from Rothman and Young, J. Quonf. Spectrosc. Radia. Transfer Vol. 25, pp. 505-524. 1981
-		std::vector<double> ens {0.0,667.379,1285.4087,1335.129,1388.1847,1932.472,2003.244,2076.855,2349.1433,	2548.373,2585.032,2671.146,2671.716,2760.735,2797.140,3004.012,3181.450,3240.564,3339.340,3340.501,3442.256,3500.590,3612.842,3659.271,3714.783	};
-		const int maxvibs = min(paraPtr->nvibs,(int)ens.size());
-		for(unsigned v=0;v<maxvibs;v++){
-			paraPtr->vibensPtr[v] = ens[v]/icmPau;
-		}
-	}
-	void rotationalenergies_oco(PARAMS *paraPtr)
-	{
-		// from Rothman and Young, J. Quonf. Spectrosc. Radia. Transfer Vol. 25, pp. 505-524. 1981
-		std::vector<double> Bv {0.39021894,0.39064230,0.39048230,0.39167020,0.39018893,0.39073215,0.39238558,0.39041600,0.38714140,0.39110670,0.39193800,0.38954820,0.39308410,0.39153500,0.39059100,0.38759300,0.3910280,0.3926960,0.3900350,0.393908,0.3922100,0.3904610,0.38750493,0.38864000,0.38706227};
-		std::vector<double> Dv {1.33373e-7,1.359e-7,1.57161e-7,1.389e-7,1.14952e-7,1.441e-7,1.403e-7,1.281e-7,1.33034e-7,1.7820e-7,1.390e-7,1.2630e-7,1.42e-7,1.44e-7,0.88e-7,1.349e-7,1.63e-7,1.51e-7,1.37e-7,1.44e-7,1.36e-7,1.14e-7,1.58150e-7,1.37445e-7,1.13570e-7};
-		std::vector<double> Hv {0.16e-13,0.17e-13,2.33e-13,0.,1.91e-13,0.,0.,0.,0.17e-13,0.40e-13,0.,4.65e-13,0.,0.,0.,0.,0.,0.,0.,0.,0.,0.,2.74e-13,0.,1.10e-13};
-
-		assert(Bv.size() == Dv.size());
-		assert(Bv.size() == Hv.size());
-		const int v = min(paraPtr->currentv,(int)Bv.size());
-		for (unsigned i=0;i<paraPtr->sizej;i++){
-			double j= (double)(paraPtr->jPtr[i]);
-			paraPtr->ejPtr[i] = Bv[v]*j*(j+1)-Dv[v]*gsl_pow_2(j)*gsl_pow_2(j+1) + Hv[v]*gsl_pow_3(j)*gsl_pow_3(j+1); // in cm^-1
-			paraPtr->ejPtr[i] /= icmPau; // in atomic units
-		}
-
-	}
-
-	void rotationalenergies_oo(PARAMS *paraPtr){
-		// from JOURNAL OF MOLECULAR SPECTROSCOPY 154,372-382 ( 1992) G. ROUILLE "High-Resolution Stimulated Raman Spectroscopy of O2"
-		const int vv = min(3,paraPtr->currentv);
-		const double Bv[] = {1.437676476, 1.42186454, 1.4061199, 1.39042};
-		const double Dv[] = {4.84256e-6, 4.8418e-6, 4.8410e-6, 4.8402e-6};
-		const double Hv = 2.8e-12;
-		double jj;
-		for (int i=0;i<paraPtr->sizej;i++){
-			jj= static_cast<double>(paraPtr->jPtr[i]);
-			paraPtr->ejPtr[i] = Bv[vv]*jj*(jj+1)-Dv[vv]*gsl_pow_2(jj)*gsl_pow_2(jj+1) + Hv*gsl_pow_3(jj)*gsl_pow_3(jj+1); // in cm^-1
-			paraPtr->ejPtr[i] /= icmPau; // in atomic units
-		}
-	}
-	void rotationalenergies_nn(PARAMS *paraPtr){
-		// numbers come from Loftus and Kuprienie, J. Phys. Chem. ref. Data, Vol. 6, No. 1, 1977. p242
-		const int vv = min(16,paraPtr->currentv);
-		const double Bv[]={1.98957, 1.972, 1.9548, 1.9374, 1.9200, 1.9022, 1.8845, 1.8666, 1.8488, 1.8310, 1.8131, 1.7956, 1.7771, 1.7590, 1.7406, 1.7223};
-		double Dv = 1e-6*5.75, jj;
-		//  Dv*=10; // artificially increase the distortion rather than temperature.
-		//  Dv *= 0.0; // artificially kill distortion
-		for (int i=0;i<paraPtr->sizej;i++){
-			jj= static_cast<double>(paraPtr->jPtr[i]);
-			paraPtr->ejPtr[i] = Bv[vv]*jj*(jj+1)-Dv*gsl_pow_2(jj)*gsl_pow_2(jj+1); // in cm^-1
-			paraPtr->ejPtr[i] /= icmPau; // in atomic units
-		}
-	}
-
-	void rotationalenergies_nn_nodistortion(PARAMS *paraPtr){
-		// numbers come from Loftus and Kuprienie, J. Phys. Chem. ref. Data, Vol. 6, No. 1, 1977. p242
-		const int vv = min(16,paraPtr->currentv);
-		const double Bv[]={1.98957, 1.972, 1.9548, 1.9374, 1.9200, 1.9022, 1.8845, 1.8666, 1.8488, 1.8310, 1.8131, 1.7956, 1.7771, 1.7590, 1.7406, 1.7223};
-		double jj;
-		for (int i=0;i<paraPtr->sizej;i++){
-			jj= static_cast<double>(paraPtr->jPtr[i]);
-			paraPtr->ejPtr[i] = Bv[vv]*jj*(jj+1);// in cm^-1
-			paraPtr->ejPtr[i] /= icmPau; // in atomic units
-		}
-	}
-
-	void rotationalenergies_ii(PARAMS *paraPtr){
-		double Bv, Dv, vv, jj;
-		vv = static_cast<double>(paraPtr->currentv);
-		for (int i=0;i<paraPtr->sizej;i++){
-			jj= static_cast<double>(paraPtr->jPtr[i]);
-			Bv=3.7395e-2 - 1.2435e-4*(vv+0.5) + 4.498e-7*gsl_pow_2(vv+0.5) - 1.482e-8*gsl_pow_3(vv+0.5) - 3.64e-11*gsl_pow_4(vv+0.5);
-			Dv=4.54e-9 + 1.7e-11*(vv+0.5) + 7e-12*gsl_pow_2(vv+0.5);
-			paraPtr->ejPtr[i]=Bv*jj*(jj+1)-Dv*gsl_pow_2(jj)*gsl_pow_2(jj+1); // in cm^-1
-			paraPtr->ejPtr[i] /= icmPau; // in atomic units
-		}
-	}
-
-
-	int func (double t,const double y[],double f[],void *paraPtrvoid){
-		PARAMS *paraPtr;
-		paraPtr = (PARAMS *)paraPtrvoid;
-		const int m=paraPtr->m;
-		const int dim=paraPtr->dim;
-		const int jstart = paraPtr->jstart;
-
-		int realj;
-		int *realjPtr=&realj;
-
-		static double FF;
-		FF = 0.0;
-
-		static int i;
-
-		for (i=0;i<dim;i++){
-			f[i]=0.0;
-		}
-
-		if( inpulse(t,paraPtr,&FF) ){  // is coupling
-
-			double aa,bb,cc;
-
-			for (i=0;i<dim;i+=2){
-				setrealj(realjPtr,&i,paraPtr);
-				//      if (paraPtr->m==1 && paraPtr->jstart==0 && static_cast<int>(t) == 0){cout << *realjPtr << " ";}
-				if (*realjPtr != -1){
-					aa = (paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m]) - (1+paraPtr->aajmPtr[*realjPtr])*FF;
-					bb = -1.0 * (paraPtr->bbjmPtr[*realjPtr])*FF;
-					cc = -1.0 * (paraPtr->ccjmPtr[*realjPtr])*FF;
-					f[i] = aa*y[i+1];
-					f[i+1] = -1.0*aa*y[i];
-					if (i>0) {
-						f[i] += bb*y[i-2+1];
-						f[i+1] -= bb*y[i-2];
-					}
-					if (i<dim-2) {
-						f[i] += cc*y[i+3];
-						f[i+1] -= cc*y[i+2];
-					}
-				}
-			}
-
-		} else {  // no coupling
-
-			for (i=0;i<dim;i+=2){
-				setrealj(realjPtr,&i,paraPtr);
-				if (*realjPtr != -1){
-					f[i]= (paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m])*y[i+1];
-					f[i+1]= -(paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m])*y[i];
-					// y' = E/i y; y = exp(-iEt)
-				}
-			}
-		} 
-		return GSL_SUCCESS;
-	}
-
-	int jac(double t,const double y[],double *dfdy,double dfdt[],void *paraPtrvoid){
-		PARAMS *paraPtr;
-		paraPtr = (PARAMS *)paraPtrvoid;
-		const int m=paraPtr->m;
-		const int dim = paraPtr->dim;
-		const int jstart = paraPtr->jstart;
-
-		static int realj;
-		int *realjPtr=&realj;
-
-		static int i;
-		for (i=0;i<gsl_pow_2(dim);i++){
-			dfdy[i]=0.0;
-		}
 		gsl_matrix_view dfdy_mat = gsl_matrix_view_array(dfdy,dim,dim);
 		gsl_matrix *mat = &dfdy_mat.matrix;
 
 
-		for (int i=0;i<dim;i++){
-			dfdt[i]=0.0;
+		for (i=0;i<dim;i+=2){
+			setrealj(realjPtr,&i,paraPtr);
+			if (*realjPtr != -1){
+				gsl_matrix_set(mat,i,i+1,(paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m])-(1+paraPtr->aajmPtr[*realjPtr])*FF);
+				gsl_matrix_set(mat,i,i-2+1,-(paraPtr->bbjmPtr[*realjPtr])*FF);
+				gsl_matrix_set(mat,i,i+2+1,-(paraPtr->ccjmPtr[*realjPtr])*FF);
+				gsl_matrix_set(mat,i+1,i,-((paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m])-(1+paraPtr->aajmPtr[*realjPtr])*FF));
+				gsl_matrix_set(mat,i+1,i-2,(paraPtr->bbjmPtr[*realjPtr])*FF);
+				gsl_matrix_set(mat,i+1,i+2,(paraPtr->ccjmPtr[*realjPtr])*FF);
+			}
 		}
 
-		double FF=0.0, dFFdt = 0.0;
-
-		if( inpulse(t,paraPtr,&FF,&dFFdt) ){  // is coupling
 
 
-			gsl_matrix_view dfdy_mat = gsl_matrix_view_array(dfdy,dim,dim);
-			gsl_matrix *mat = &dfdy_mat.matrix;
+		double dadt,dbdt,dcdt;
 
 
-			for (i=0;i<dim;i+=2){
-				setrealj(realjPtr,&i,paraPtr);
-				if (*realjPtr != -1){
-					gsl_matrix_set(mat,i,i+1,(paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m])-(1+paraPtr->aajmPtr[*realjPtr])*FF);
-					gsl_matrix_set(mat,i,i-2+1,-(paraPtr->bbjmPtr[*realjPtr])*FF);
-					gsl_matrix_set(mat,i,i+2+1,-(paraPtr->ccjmPtr[*realjPtr])*FF);
-					gsl_matrix_set(mat,i+1,i,-((paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m])-(1+paraPtr->aajmPtr[*realjPtr])*FF));
-					gsl_matrix_set(mat,i+1,i-2,(paraPtr->bbjmPtr[*realjPtr])*FF);
-					gsl_matrix_set(mat,i+1,i+2,(paraPtr->ccjmPtr[*realjPtr])*FF);
+		for (i=0;i<dim;i+=2){
+			setrealj(realjPtr,&i,paraPtr);
+			if (*realjPtr != -1){
+				dadt=-(1+paraPtr->aajmPtr[*realjPtr])*dFFdt;
+				dbdt=-(paraPtr->bbjmPtr[*realjPtr])*dFFdt;
+				dcdt=-(paraPtr->ccjmPtr[*realjPtr])*dFFdt;
+
+				dfdt[i] = dadt*y[i+1];
+				dfdt[i+1] = -1.0*dadt*y[i];
+				if (i>0) {
+					dfdt[i] += dbdt*y[i-1];
+					dfdt[i+1] -= dbdt*y[i-2];
+				}
+				if (i<dim-2) {
+					dfdt[i] += dcdt*y[i+3];
+					dfdt[i+1] -= dcdt*y[i+2];
+				}
+
+			}
+		}
+	} else { // no coupling
+
+
+		for (i=0;i<dim;i+=2){
+			setrealj(realjPtr,&i,paraPtr);
+			if (*realjPtr != -1){
+				gsl_matrix_set(mat,i,i+1,paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m]);
+				gsl_matrix_set(mat,i+1,i,-(paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m]));
+
+			}
+		}
+
+	} 
+	return GSL_SUCCESS;
+}
+
+
+void addtosignaldistro(double *y,double *signal,double *imsignal,int tind,PARAMS *paraPtr){
+
+
+	const int m=paraPtr->m;
+	const int dim = paraPtr->dim;
+	const int jstart = paraPtr->jstart;
+	const int v = paraPtr->currentv;
+
+	double realcossq=0.0, imagcossq=0.0;
+	int realj;
+	int *realjPtr=&realj;
+	data2d_t distro = *(paraPtr->distroPtr);
+	data2d_t legendres = *(paraPtr->legendresPtr);
+
+
+	/*
+	   Distro contribution... here we multiply the Ylm by the complex coefficient (I guess) to get the theta dependence for hte coherent sum.
+	   Then we add that sum to the total distro vector.
+	   Actually, I bet we take the absolute square of it conj(psi)*psi where psi is the coherent sum of phi's which are the complex coefficient weighted Ylms
+	   You want Psi(l,m) and to project that onto Psi(theta,phi)
+	 */
+
+	/*
+	   We should not recompute the Legendres every pass, maybe only once on every update of m, then pass it through paraPtr
+	 */
+
+
+	//  sqrnormalizey(y,paraPtr);
+
+	// HERE HERE HERE HERE //
+	std::vector< std::complex<double> > psip(paraPtr->thetasPtr->size()); // dim/2 because I was manually accomodating complex // or because we only couple every other J
+	std::vector< std::complex<double> > psim(paraPtr->thetasPtr->size()); // dim/2 because I was manually accomodating complex // or because we only couple every other J
+
+	double scale = paraPtr->pvPtr[v] * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
+	std::fill(psip.begin(),psip.end(),std::complex<double>(0));
+	std::fill(psim.begin(),psim.end(),std::complex<double>(0));
+	for (int i=0;i<dim;i+=2){
+		setrealj(realjPtr,&i,paraPtr);
+		if (*realjPtr != -1){
+			realcossq += ( gsl_pow_2(y[i]) + gsl_pow_2(y[i+1]) ) * paraPtr->aajmPtr[*realjPtr];
+			imagcossq += 0.0;
+			if(i<(dim-2)){
+				realcossq += (y[i] * y[i+2] + y[i+1] * y[i+3])  * paraPtr->ccjmPtr[*realjPtr];
+				imagcossq += (-y[i+3] * y[i] + y[i+2] * y[i+1]) * paraPtr->ccjmPtr[*realjPtr];
+			}
+			if(i>2){
+				realcossq += (y[i] * y[i-2] + y[i+1] * y[i-1]) * paraPtr->bbjmPtr[*realjPtr];
+				imagcossq += (-y[i-1] * y[i] + y[i-2] * y[i+1]) * paraPtr->bbjmPtr[*realjPtr];
+			}
+			std::complex<double> coeff = y[i] + 1i * y[i+1];
+			for (size_t t=0;t<paraPtr->thetasPtr->size();++t){
+				psip[t] += coeff * paraPtr->legendresPtr->at(t)[*realjPtr];
+				if (m%2==0){ // handle the (-1)^m case for Y_l^(-m)
+					psim[t] += coeff * paraPtr->legendresPtr->at(t)[*realjPtr];
+				} else {
+					psim[t] -= coeff * paraPtr->legendresPtr->at(t)[*realjPtr];
 				}
 			}
+		}
+	}
+	for (size_t th=0;th<paraPtr->thetasPtr->size();++th){
+		paraPtr->distroPtr->at(th)[tind] += scale * std::pow(std::abs(psip[th]),int(2));
+		if (m>0){
+			paraPtr->distroPtr->at(th)[tind] += scale * std::pow(std::abs(psim[th]),int(2));
+		}
 
+		//paraPtr->distroPtr->at(th)[tind] += std::pow(std::abs(psi[th]),int(2));
+		//std::cout << psi[t].real() << "," << psi[t].imag() << "\t";
+	}
+	//std::cout << std::endl;
+	// HERE HERE HERE HERE //
 
-
-			double dadt,dbdt,dcdt;
-
-
-			for (i=0;i<dim;i+=2){
-				setrealj(realjPtr,&i,paraPtr);
-				if (*realjPtr != -1){
-					dadt=-(1+paraPtr->aajmPtr[*realjPtr])*dFFdt;
-					dbdt=-(paraPtr->bbjmPtr[*realjPtr])*dFFdt;
-					dcdt=-(paraPtr->ccjmPtr[*realjPtr])*dFFdt;
-
-					dfdt[i] = dadt*y[i+1];
-					dfdt[i+1] = -1.0*dadt*y[i];
-					if (i>0) {
-						dfdt[i] += dbdt*y[i-1];
-						dfdt[i+1] -= dbdt*y[i-2];
-					}
-					if (i<dim-2) {
-						dfdt[i] += dcdt*y[i+3];
-						dfdt[i+1] -= dcdt*y[i+2];
-					}
-
-				}
-			}
-		} else { // no coupling
-
-
-			for (i=0;i<dim;i+=2){
-				setrealj(realjPtr,&i,paraPtr);
-				if (*realjPtr != -1){
-					gsl_matrix_set(mat,i,i+1,paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m]);
-					gsl_matrix_set(mat,i+1,i,-(paraPtr->ejPtr[*realjPtr]-paraPtr->ejPtr[jstart+m]));
-
-				}
-			}
-
-		} 
-		return GSL_SUCCESS;
+	double reval = realcossq * scale;
+	double imval = imagcossq * scale;
+	if (m>0){
+		reval *=2;
+		imval *=2;
 	}
 
-
-	void addtosignaldistro(double *y,double *signal,double *imsignal,data2d_t & distro,int tind,PARAMS *paraPtr){
-
+	signal[tind] += reval;
+	imsignal[tind] += imval;
+}
+void addtosignal(double *y,double *signal,double *imsignal,int tind,PARAMS *paraPtr){
 
 		const int m=paraPtr->m;
 		const int dim = paraPtr->dim;
@@ -954,19 +1073,6 @@ void hc2ampphase_print(std::vector< std::vector< double * > > &data,const unsign
 		double realcossq=0.0, imagcossq=0.0;
 		int realj;
 		int *realjPtr=&realj;
-			
-
-		/*
-		Distro contribution... here we multiply the Ylm by the complex coefficient (I guess) to get the theta dependence for hte coherent sum.
-		Then we add that sum to the total distro vector.
-		Actually, I bet we take the absolute square of it conj(psi)*psi where psi is the coherent sum of phi's which are the complex coefficient weighted Ylms
-		You want Psi(l,m) and to project that onto Psi(theta,phi)
-		*/
-
-		/*
-		We should not recompute the Legendres every pass, maybe only once on every update of m, then pass it through paraPtr
-		*/
-
 
 		//  sqrnormalizey(y,paraPtr);
 
@@ -983,47 +1089,6 @@ void hc2ampphase_print(std::vector< std::vector< double * > > &data,const unsign
 					realcossq += (y[i] * y[i-2] + y[i+1] * y[i-1]) * paraPtr->bbjmPtr[*realjPtr];
 					imagcossq += (-y[i-1] * y[i] + y[i-2] * y[i+1]) * paraPtr->bbjmPtr[*realjPtr];
 				}
-			double scale = paraPtr->pvPtr[v] * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
-			//std::complex<double> coeff = y[i] + 1i * y[i+1];
-			// HERE HERE HERE HERE //
-			//projectYlm(,);
-			}
-		}
-
-		if(m==0){
-			signal[tind] += realcossq * paraPtr->pvPtr[v]  * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
-			imsignal[tind] += imagcossq * paraPtr->pvPtr[v]  * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
-		} else {
-			signal[tind] += 2*realcossq * paraPtr->pvPtr[v]  * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
-			imsignal[tind] += 2*imagcossq * paraPtr->pvPtr[v]  * paraPtr->pjPtr[jstart+m]/(2*(jstart+m)+1);
-		}
-	}
-	void addtosignal(double *y,double *signal,double *imsignal,int tind,PARAMS *paraPtr){
-
-		const int m=paraPtr->m;
-		const int dim = paraPtr->dim;
-		const int jstart = paraPtr->jstart;
-		const int v = paraPtr->currentv;
-
-		double realcossq=0.0, imagcossq=0.0;
-		int realj;
-		int *realjPtr=&realj;
-
-		//  sqrnormalizey(y,paraPtr);
-
-		for (int i=0;i<dim;i+=2){
-			setrealj(realjPtr,&i,paraPtr);
-			if (*realjPtr != -1){
-				realcossq += ( gsl_pow_2(y[i]) + gsl_pow_2(y[i+1]) ) * paraPtr->aajmPtr[*realjPtr];
-				imagcossq += 0.0;
-				if(i<(dim-2)){
-					realcossq += (y[i] * y[i+2] + y[i+1] * y[i+3])  * paraPtr->ccjmPtr[*realjPtr];
-					imagcossq += (-y[i+3] * y[i] + y[i+2] * y[i+1]) * paraPtr->ccjmPtr[*realjPtr];
-				}
-				if(i>2){
-					realcossq += (y[i] * y[i-2] + y[i+1] * y[i-1]) * paraPtr->bbjmPtr[*realjPtr];
-					imagcossq += (-y[i-1] * y[i] + y[i-2] * y[i+1]) * paraPtr->bbjmPtr[*realjPtr];
-				}
 			}
 		}
 
@@ -1036,7 +1101,7 @@ void hc2ampphase_print(std::vector< std::vector< double * > > &data,const unsign
 		}
 	}
 
-void passtosignaldistro(double *signal,double *imsignal,data2d_t & distro,PARAMS *paraPtr){
+void passtosignaldistro(double *signal,double *imsignal,PARAMS *paraPtr){
 	const int m = paraPtr->m;
 	const int jstart = paraPtr->jstart;
 	const int v = paraPtr->currentv;
@@ -1071,7 +1136,7 @@ void printLegendres(std::string & file,record_t & th,data2d_t & legs)
 	std::ofstream out(file.c_str(),std::ios::out);
 	for(size_t t=0;t<th.size();++t){
 		out << th[t] << "\t";
-		for(size_t j=0;j<legs[t].size();++j)
+		for(size_t j=0;j<legs[0].size();++j)
 		{
 			out << legs[t][j] << "\t";
 		}
@@ -1082,16 +1147,50 @@ void printLegendres(std::string & file,record_t & th,data2d_t & legs)
 }
 void computeLegendres(record_t & thetas, data2d_t & legs,PARAMS *paraPtr)
 {
+	const double rangebuffer = 1e-8;
 	const int m = paraPtr->m;
 	const int maxj = paraPtr->maxj;
 	for(size_t t=0;t<thetas.size();++t){
-		thetas[t] = t*two_PI<double>()/double(thetas.size()-1);
-		for(size_t j=0;j<2;++j){
-			legs[t][j]=(boost::math::legendre_p(j + m, m, std::cos(thetas[t])));
+		//thetas[t] = t*PI<double>()/double(thetas.size()-1); // This getts the distributions wrong, makes <cos^2 theta> ~ .425... 
+		thetas[t] = std::acos((1-rangebuffer)-t*(2-rangebuffer)/double(thetas.size()-1)); // THIS ACOS() HELPED ENORMOUSLY!!, and also trying to move jut inside of 1,-1 range
+		for(size_t j=m;j<m+2;++j){
+			/*
+			scale = (j+m)*std::factorial(j)/std::factorial(j+2*m);// note j here is actually realj - m
+			scale is tricky  normalization is std::sqrt( (2*l + 1 )/(4pi) * (l-m)!/(l+m)!)
+			so, lets get that factorial ratio
+
+			let l = 15, m=10
+			5!/25! = 1*2*3*4*5/(1*2*3*4*5*6*7..*25) = 1/(6*7*8*9..*25) = 1/((l-m+1)*(l-m+2)...*(l+m))
+			*/
+			/*
+			double scale(1);
+			if (m==1) {
+				scale =  1./double(3*2);
+			}
+			legs[t][j]=std::sqrt(((2*j+1)/2.)*scale) * (boost::math::legendre_p(j + m, m, std::cos(thetas[t])));
+			*/
+			legs[t][j]= (boost::math::legendre_p(j, m, std::cos(thetas[t])));
 		}
-		for(size_t j=2;j<maxj-m;++j){
-			legs[t][j]=(boost::math::legendre_next(j + m - 1, m, std::cos(thetas[t]), legs[t][j-1], legs[t][j-2]));
+		for(size_t j=m+2;j<maxj;++j){
+			//double scale = boost::math::tgamma(int(j+1))/boost::math::tgamma(int(j+2*m+1));
+			//legs[t][j]=std::sqrt( ((2*j+1)/2.) * scale ) * (boost::math::legendre_next(j + m - 1, m, std::cos(thetas[t]), legs[t][j-1], legs[t][j-2]));
+			legs[t][j]=(boost::math::legendre_next(j - 1, m, std::cos(thetas[t]), legs[t][j-1], legs[t][j-2]));
 		}
+		std::fill(legs[t].begin() ,legs[t].begin()+m,double(0));
+		/*
+		HERE HERE HERE HERE
+		If creativity fails you, just do a brute force squarenormalization
+		*/
+	}
+	for (size_t j=m;j<maxj;++j){ // OK, here's the brute force method 
+		double scale = 0.;
+		for (size_t t = 0 ; t < legs.size(); ++t){
+			scale += std::pow(legs[t][j],int(2));
+		}
+		for (size_t t = 0 ; t < legs.size(); ++t){
+			legs[t][j] *= sqrt(legs.size()/scale);
+		}
+		
 	}
 }
 

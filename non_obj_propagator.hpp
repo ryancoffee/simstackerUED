@@ -24,7 +24,7 @@ typedef std::vector< record_t > data2d_t;
 template <typename T>
 inline T PI(void){return boost::math::constants::pi<T>();}
 template <typename T>
-inline T two_PI(void){return boost::math::constants::pi<T>();}
+inline T two_PI(void){return boost::math::constants::two_pi<T>();}
 template <typename T>
 inline T root_PI(void) { return boost::math::constants::root_pi<T>(); }
 template <typename T>
@@ -55,6 +55,9 @@ struct PARAMS { // this is also crazy, redo this by implementing classes
   double kTinau;
   double *vibensPtr, *pvPtr;
   double tstepsize;
+  data2d_t * legendresPtr;
+  record_t * thetasPtr;
+  data2d_t * distroPtr;
 };
 
 // proto-typing functions //  This is crazy, fix this with some classes
@@ -67,10 +70,10 @@ bool inpulse(const double t,PARAMS * paraPtr,double *FF,double *dFFdt);
 int func (double t,const double y[],double f[],void *paraPtrvoid);
 int jac(double t,const double y[],double *dfdy,double dfdt[],void *paraPtrvoid);
 void sqrnormalizey(double *y,PARAMS *paraPtr);
-void addtosignaldistro(double *y,double *signal,double *imsignal,data2d_t & distro,int tind,PARAMS *paraPtr);
+void addtosignaldistro(double *y,double *signal,double *imsignal,int tind,PARAMS *paraPtr);
 void addtosignal(double *y,double *signal,double *imsignal,int tind,PARAMS *paraPtr);
 void passtosignal(double *signal,double *imsignal,PARAMS *paraPtr);
-void passtosignaldistro(double *signal,double *imsignal,data2d_t & distro,PARAMS *paraPtr);
+void passtosignaldistro(double *signal,double *imsignal,PARAMS *paraPtr);
 void addtopjnew(const double *y,PARAMS *paraPtr);
 void passtopjnew(PARAMS *paraPtr);
 void setrealj(int *realj,const int *i,PARAMS *paraPtr);
